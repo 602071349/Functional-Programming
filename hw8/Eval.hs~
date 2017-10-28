@@ -1,0 +1,126 @@
+----------------------------------------------------------------
+-- Computer Science 320 (Fall, 2016)
+-- Concepts of Programming Languages
+--
+-- Assignment 6
+--   Eval.hs
+
+----------------------------------------------------------------
+-- Evaluation Functions for the mini-Haskell Interpreter
+
+module Eval (evalExp) where
+
+import Env
+import Err (Error(..))
+import Exp (Oper(..), Exp(..),subst,noLets)
+import Val (Val(..))
+
+----------------------------------------------------------------
+-- This function is exported to the Main module.
+
+evalExp :: Exp -> Error Val
+evalExp e = ev (noLets e) emptyEnv
+
+----------------------------------------------------------------
+-- Functions for evaluating operations applied to values.
+
+appOp :: Oper -> Val -> Error Val
+appOp Plus (VN x)=S (Partial Plus (VN x))
+appOp Times (VN x)=S (Partial Times (VN x))
+appOp Equal (VN x)=S (Partial Equal (VN x))
+appOp Equal (VB x)=S (Partial Equal (VB x))
+appOp Equal (VListBool x)=S (Partial Equal (VListBool x))
+appOp Equal (VListInt x) =S (Partial Equal (VListInt x))
+appOp And (VB x)=S (Partial And (VB x))
+appOp Or (VB x)=S (Partial Or (VB x))
+appOp Cons (VB x)=S (Partial Cons (VB x))
+appOp Cons (VN x)=S (Partial Cons (VN x))
+appOp Cons (VListBool x)=S (Partial Cons (VListBool x))
+appOp Cons (VListInt x)=S (Partial Cons (VListInt x))
+appOp Not (VB x)=S (VB (not x))
+appOp Head (VListBool (x:xs))=S (VB x)
+appOp Head (VListInt (x:xs))=S (VN x)
+appOp Tail (VListBool (x:xs))= S (VListBool xs)
+appOp Tail (VListInt (x:xs))=S (VListInt xs)
+appOp _ _ = Error "Error"
+
+appBinOp :: Oper -> Val -> Val -> Error Val
+appBinOp Plus (VN a) (VN b) =S (VN (a + b))
+appBinOp Times (VN a) (VN b) =S (VN (a * b))
+appBinOp Equal (VN a) (VN b) =S (VB (a == b))
+appBinOp Equal (VB a) (VB b) =S (VB (a == b))
+appBinOp Equal (VListBool a) (VListBool b) =S (VB(a == b))
+appBinOp Equal (VListInt a) (VListInt b) =S (VB(a == b))
+appBinOp And (VB a) (VB b) =S (VB (a && b))
+appBinOp Or (VB a) (VB b) =S (VB (a || b))
+appBinOp Cons (VN a) (VListInt b) =S (VListInt (a:b))
+appBinOp Cons (VB a) (VListBool b) =S (VListBool (a:b))
+appBinOp Cons (VN a) (VNil) =S (VListInt [a])
+appBinOp Cons (VB a) (VNil) =S (VListBool [a])
+
+
+
+
+----------------------------------------------------------------
+-- Function for applying one value to another.
+
+appVals :: Val -> Val -> Error Val
+appVals (VOp a) b =appOp a b
+appVals (Partial a b) c =appBinOp a b c
+appVals (VLamUnit ex lst) val=ev ex lst
+appVals (VLam str ex lst) val=ev ex (updEnv str val lst)
+appVals _ _ = Error "Error"
+
+----------------------------------------------------------------
+-- Function for evaluating an expression with no bindings or
+-- variables to a value.
+
+ev0 :: Exp -> Error Val
+ev0 Unit =S VUnit
+ev0 Nil  =S VNil
+ev0 (N a) =S (VN a)
+ev0 (B a) =S (VB a) 
+ev0 (Op a)= S (VOp a)
+ev0 (App e1 e2)= case ev0 e1 of
+	Error "Error" -> Error "Error"
+	S x -> appValExp x e2
+ev0 (If e1 e2 e3 )= case ev0 e1 of 
+	Error "Error" -> Error "Error"
+	S (VB True) -> ev0 e2
+	S (VB False) ->ev0 e3
+ev0 (LamUnit ex)=S (VLamUnit ex emptyEnv)
+ev0 (Lam str ex)= S (VLam str ex emptyEnv) 
+ev0 _ = Error "Error"
+
+
+----------------------------------------------------------------
+-- Function for evaluating an expression to a value. Note the
+-- need for an environment to keep track of variables.
+
+ev :: Exp -> Env Val -> Error Val
+ev Unit env=S VUnit
+ev Nil env=S VNil
+ev (N a) env=S (VN a)
+ev (B a) env=S (VB a) 
+ev (Op a) env= S (VOp a)
+ev (App (Lam str ex1) ex) env=ev (subst str (App (LamUnit ex) Unit) ex1) (updEnv str (VLamUnit ex emptyEnv) env) 
+ev (If e1 e2 e3 ) env= case ev e1 env of 
+	Error "Error" -> Error "Error"
+	S (VB True) -> ev e2 env
+	S (VB False) ->ev e3 env
+ev (Var str) env = case findEnv str env of
+	Nothing -> Error "Error"
+	Just a -> S a
+ev (LamUnit exp) env = S (VLamUnit exp env)
+ev (Lam str exp) env = S (VLam str exp env)
+ev a b = ev0 a  
+
+appValExp:: Val -> Exp -> Error Val
+appValExp (Partial And (VB False)) ex = S (VB False)
+appValExp (Partial Or (VB True)) ex = S (VB True)
+appValExp (VLamUnit ex1 env) ex = S (VLamUnit ex1 env)
+appValExp (VLam str ex1 env) ex = ev (subst str ex ex1) env
+appValExp val ex =case ev0 ex of
+					Error "Error" -> Error "Error"
+					S a -> appVals val a
+
